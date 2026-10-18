@@ -9,6 +9,7 @@ use std::io;
 use std::os::fd::AsFd;
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -31,6 +32,7 @@ use crate::dpi::{LogicalPosition, PhysicalPosition};
 use crate::event::{Event, WindowEvent};
 use crate::platform_impl::wayland::event_loop::sink::EventSink;
 use crate::platform_impl::wayland::state::WinitState;
+use crate::platform_impl::wayland::window::WindowRequests;
 use crate::platform_impl::wayland::{self, DeviceId, WindowId};
 
 const URI_LIST: &str = "text/uri-list";
@@ -81,6 +83,19 @@ impl DndState {
         self.ready
             .iter()
             .any(|id| self.offers.get(id).is_some_and(|offer| offer.window == Some(window)))
+    }
+
+    fn queue_drop(&mut self, id: &ObjectId, requests: &WindowRequests) -> bool {
+        let Some(offer) = self.offers.get(id) else { return false };
+        if !offer.data.dropped || offer.data.paths.is_none() {
+            return false;
+        }
+        if !self.ready.contains(id) {
+            self.ready.push_back(id.clone());
+        }
+        // If a frame callback is outstanding, its handler only wakes the loop for a redraw request.
+        requests.redraw_requested.store(true, Ordering::Relaxed);
+        true
     }
 
     fn take_drop(&mut self, window: WindowId, scale: f64) -> Option<(ObjectId, DropBatch)> {
@@ -342,12 +357,9 @@ impl WinitState {
             }
             return;
         }
-        if offer.data.dropped && offer.data.paths.is_some() {
-            if !self.dnd.ready.contains(id) {
-                self.dnd.ready.push_back(id.clone());
-            }
-            self.dispatched_events = true;
-        }
+        let Some(window) = offer.window else { return };
+        let Some(requests) = self.window_requests.get_mut().get(&window) else { return };
+        self.dispatched_events |= self.dnd.queue_drop(id, requests);
     }
 
     pub(crate) fn dnd_take_drop(&mut self, window: WindowId, scale: f64) -> Option<DropBatch> {
@@ -645,6 +657,9 @@ mod tests {
     use super::*;
     use sctk::reexports::client::protocol::wl_registry::WlRegistry;
     use std::os::unix::ffi::OsStrExt;
+    use std::sync::atomic::AtomicBool;
+
+    use crate::platform_impl::wayland::window::state::FrameCallbackState;
 
     // Allocate distinct typed proxy identities on a socket whose peer never dispatches. This
     // exercises the real offer map without a compositor, a WinitState, or a new test dependency.
@@ -658,6 +673,59 @@ mod tests {
             _: &QueueHandle<Self>,
         ) {
         }
+    }
+
+    #[test]
+    fn completed_deferred_drop_requests_the_frame_callback_wakeup() {
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(socket).unwrap();
+        let queue = connection.new_event_queue::<WinitState>();
+        let qh = queue.handle();
+        let registry = connection.display().get_registry(&qh, ());
+        let device: WlDataDevice = registry.bind(1, 3, &qh, ());
+        let proxy: WlDataOffer = registry.bind(2, 3, &qh, ());
+        let id = proxy.id();
+        let window = WindowId(1);
+        let mut offer = Offer::new(proxy, device.id());
+        offer.window = Some(window);
+        offer.position = Some(LogicalPosition::new(400.0, 300.0));
+        offer.action = DndAction::Copy;
+        offer.source_actions = DndAction::Copy;
+        offer.data.dropped = true;
+        offer.data.append(b"file:///tmp/deferred.pdf\n").unwrap();
+        let mut dnd = DndState::default();
+        dnd.offers.insert(id.clone(), offer);
+        let requests = WindowRequests {
+            closed: AtomicBool::new(false),
+            redraw_requested: AtomicBool::new(false),
+        };
+        assert!(!dnd.queue_drop(&id, &requests), "the source has not closed its pipe yet");
+        assert!(!requests.redraw_requested.load(Ordering::Relaxed));
+        assert!(dnd.offers.get_mut(&id).unwrap().data.read_done());
+        assert!(dnd.queue_drop(&id, &requests));
+        assert!(dnd.has_ready_drop(window));
+
+        // The completion wakes this iteration, but an outstanding frame callback prevents drawing.
+        let mut frame = FrameCallbackState::Requested;
+        assert!(matches!(frame, FrameCallbackState::Requested));
+        let mut dispatched_events = false; // single_iteration resets this before waiting again.
+        // CompositorHandler::frame uses this exact flag to wake the loop; no input event follows.
+        if requests.redraw_requested.load(Ordering::Relaxed) {
+            dispatched_events = true;
+        }
+        frame = FrameCallbackState::Received;
+        assert!(dispatched_events, "the frame callback must wake delivery without another input");
+        assert!(matches!(frame, FrameCallbackState::Received));
+        assert!(requests.take_redraw_requested());
+        let (_, batch) = dnd.take_drop(window, 1.0).unwrap();
+        let mut delivered = Vec::new();
+        batch.dispatch(|event| {
+            if let WindowEvent::DroppedFile(path) = event {
+                delivered.push(path);
+            }
+        });
+        assert_eq!(delivered, [PathBuf::from("/tmp/deferred.pdf")]);
+        assert!(!dnd.has_ready_drop(window));
     }
 
     #[test]
