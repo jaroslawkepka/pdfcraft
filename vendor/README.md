@@ -27,6 +27,21 @@ licence files unchanged. Every patch is marked `PdfCraft patch:` in the source, 
 PdfCraft test, and should be proposed upstream. Remove the vendored copy once upstream releases
 the fix. Vendoring copyleft code is never allowed (plan/adr/0001).
 
+Native Wayland file drops (#634): the winit 0.30.13 patch in
+`src/platform_impl/linux/wayland/seat/dnd.rs` binds per-seat data devices and translates local
+`text/uri-list` Copy transfers into the existing hover/drop/cancel events. Offers own independent,
+nonblocking reads, including drops still arriving when a new drag enters. Transfers are bounded
+by 1 MiB, 1,024 files, 16 pending offers and a 30-second read deadline. Completed drops use their
+saved content position in separate redraw batches, then restore the current pointer. Decoration
+subsurface offers are rejected because their local coordinates require frame-specific translation.
+The module's tests cover URI decoding, malformed input, limits, deferred delivery, hover events,
+decoration rejection and pipe behavior, and run in Linux CI with
+`cargo test --locked --manifest-path vendor/winit/Cargo.toml --lib dnd::tests`. Manual acceptance
+passed on Fedora 45 / KDE / native Wayland / Dolphin and Linux Mint 22.3 / Cinnamon / X11 / Nemo:
+PDF, multiple files, Unicode and spaces, JPG, cancelled drags and repeated drag/drop all worked,
+with X11 behavior preserved. No dependency versions change; retire this patch when egui's winit
+integration supports upstream native Wayland receiving (winit #4571).
+
 A PdfCraft patch in `hayro-syntax::Page::base_dimensions` expresses the existing one-point floor as a raw reciprocal of `/UserUnit`, rounded upward only when f32 multiplication would fall below one point. Five `pdfcraft-render` regressions with prefix `raster::tests::raw_crop_` cover the observed dimensions, origins and rotations, units 41/47, bounded vector rasters and unchanged nearly-zero A4 fallback. Accepted page-unit policy and licences are unchanged.
 
 In `hayro-interpret`, Type 3 glyph bounding boxes are transformed to device space before intersecting clip and shading bounds; `raster::tests::shaded_type3_glyph_draws_at_multiple_positions` covers translated glyphs (#3178).
