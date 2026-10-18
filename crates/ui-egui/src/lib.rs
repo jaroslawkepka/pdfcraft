@@ -3671,6 +3671,11 @@ impl eframe::App for PdfCraftApp {
             if blocked || self.active != Some(index) {
                 view.auto_scroll.cancel();
             }
+            if self.active != Some(index) {
+                // Marquee gestures end when their document loses input ownership.
+                view.marquee = None;
+                view.marquee_done = None;
+            }
         }
         // A field that refused its value this frame keeps the shortcut from saving or printing
         // behind the user's back; so does a save prompt opened since.
