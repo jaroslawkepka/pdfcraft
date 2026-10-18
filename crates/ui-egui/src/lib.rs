@@ -518,8 +518,10 @@ pub struct PdfCraftApp {
     /// showing its comments or bookmarks (#1590). Remembered across restarts.
     pub right_panel_closed: bool,
     pub quick_tool: QuickTool,
-    /// The tool to go back to when Space, held for a temporary Hand, is released.
-    space_hand: Option<QuickTool>,
+    /// (Previous tool, temporary tool) while Space is held for Hand or Ctrl/⌘+Space for zoom.
+    /// A deliberate tool change during zoom discards the previous tool but keeps the override
+    /// marker until release, so holding the keys cannot reactivate it over the user's choice.
+    space_tool: Option<(Option<QuickTool>, QuickTool)>,
     /// Comment author, per-tool colours and widths, pin.
     pub comment_prefs: comments::CommentPrefs,
     /// Resolved colours, including the current OS theme when following the system.
@@ -908,7 +910,7 @@ impl PdfCraftApp {
             comments_panel_closed: false,
             right_panel_closed: false,
             quick_tool: QuickTool::Select,
-            space_hand: None,
+            space_tool: None,
             comment_prefs: Default::default(),
             theme: ThemeKind::Light,
             theme_preference: ThemePreference::Light,
@@ -2796,6 +2798,8 @@ impl PdfCraftApp {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::Key;
+        // Release temporary tools even if a modal opened or the active document closed.
+        self.tool_keys(ctx);
         // "Save changes?" is modal: its keys are its own (⌘D is Don't save there, not Document
         // properties; Escape cancels it rather than clearing a selection), and nothing may run
         // underneath it. They are read here, before the canvas can consume them.
@@ -2836,7 +2840,6 @@ impl PdfCraftApp {
                     self.views[i].select_all();
                 }
             }
-            self.tool_keys(i, ctx);
             if self.quick_tool == QuickTool::EditText
                 && let Some(doc) = self.session.get(self.views[i].id).filter(|d| d.allows_modification())
             {
@@ -2889,35 +2892,75 @@ impl PdfCraftApp {
         true
     }
 
-    /// The quick tools' keys, as in Acrobat: V selects, H pans, and holding Space pans until it
-    /// is released. Plain letters, so not while a text field, a form field, a dialog or the
-    /// palette has the keyboard.
-    fn tool_keys(&mut self, i: usize, ctx: &egui::Context) {
-        use egui::Key;
-        let free = self.dialog.is_none() && !self.palette_open && !ctx.egui_wants_keyboard_input() && self.views[i].forms.focus.is_none();
-        let (plain, space) = ctx.input(|input| (input.modifiers.is_none(), input.key_down(Key::Space)));
-        if let Some(previous) = self.space_hand
-            && !space
+    /// V selects, H pans, Space temporarily pans, and Ctrl/⌘+Space temporarily zooms. Text
+    /// fields, form fields, dialogs and the palette keep their own keyboard input.
+    fn tool_keys(&mut self, ctx: &egui::Context) {
+        use egui::{Key, Modifiers};
+        let view = self.active.and_then(|i| self.views.get(i));
+        let free = !self.modal_open() && !self.palette_open && !ctx.egui_wants_keyboard_input() && view.is_some_and(|v| v.forms.focus.is_none());
+        let (modifiers, space) = ctx.input(|input| (input.modifiers, input.key_down(Key::Space)));
+        let plain = modifiers.is_none();
+        let mut temporary = if !free || !space {
+            None
+        } else if modifiers.matches_exact(Modifiers::COMMAND) {
+            Some(QuickTool::MarqueeZoom)
+        } else if plain || self.space_tool.is_some_and(|(_, tool)| tool == QuickTool::Hand) {
+            // Adding an unrelated modifier to an existing temporary Hand keeps panning.
+            Some(QuickTool::Hand)
+        } else {
+            None
+        };
+        if free
+            && temporary != Some(QuickTool::MarqueeZoom)
+            && self.quick_tool == QuickTool::MarqueeZoom
+            && self.space_tool.is_some_and(|(_, tool)| tool == QuickTool::MarqueeZoom)
+            && ctx.input(|input| input.pointer.primary_clicked() || (view.is_some_and(|v| v.marquee.is_some()) && input.pointer.any_released()))
         {
-            self.space_hand = None;
-            if self.quick_tool == QuickTool::Hand {
+            // Pointer-up and shortcut-up can arrive together: finish the click or rectangle,
+            // then restore the tool on the next frame even if there is no further input.
+            temporary = Some(QuickTool::MarqueeZoom);
+            ctx.request_repaint();
+        }
+        if let Some((previous, QuickTool::MarqueeZoom)) = &mut self.space_tool
+            && previous.is_some()
+            && (temporary != Some(QuickTool::MarqueeZoom) || self.quick_tool != QuickTool::MarqueeZoom)
+        {
+            for view in &mut self.views {
+                view.marquee = None;
+                view.marquee_done = None;
+            }
+            if self.quick_tool != QuickTool::MarqueeZoom {
+                // Cancel the old gesture once; fresh gestures belong to the selected tool.
+                *previous = None;
+            }
+        }
+        if let Some((previous, tool)) = self.space_tool
+            && temporary != Some(tool)
+        {
+            self.space_tool = None;
+            if self.quick_tool == tool
+                && let Some(previous) = previous
+            {
                 self.quick_tool = previous;
             }
         }
-        if !free || !plain {
+        if !free {
             return;
         }
-        if ctx.input(|input| input.key_pressed(Key::V)) {
+        if plain && ctx.input(|input| input.key_pressed(Key::V)) {
             self.quick_tool = QuickTool::Select;
-            self.space_hand = None;
+            self.space_tool = None;
         }
-        if ctx.input(|input| input.key_pressed(Key::H)) {
+        if plain && ctx.input(|input| input.key_pressed(Key::H)) {
             self.quick_tool = QuickTool::Hand;
-            self.space_hand = None;
+            self.space_tool = None;
         }
-        if space && self.space_hand.is_none() && self.quick_tool != QuickTool::Hand {
-            self.space_hand = Some(self.quick_tool);
-            self.quick_tool = QuickTool::Hand;
+        if let Some(tool) = temporary
+            && self.space_tool.is_none()
+            && self.quick_tool != tool
+        {
+            self.space_tool = Some((Some(self.quick_tool), tool));
+            self.quick_tool = tool;
         }
     }
 }
