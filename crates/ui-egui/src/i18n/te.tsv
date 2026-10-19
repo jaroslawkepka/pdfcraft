@@ -2449,3 +2449,4 @@ animation effects	Off	ఆఫ్
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	ఈరోజు
 @plural	{n} reply|{n} replies	{n} ప్రత్యుత్తరం|{n} ప్రత్యుత్తరాలు
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	macOSలో Spotlight {key}ను అడ్డుకోవచ్చు. సిస్టమ్ సెట్టింగ్‌లు → కీబోర్డ్ → కీబోర్డ్ సత్వరమార్గాలు → Spotlightలో దాని సత్వరమార్గాన్ని మార్చండి.

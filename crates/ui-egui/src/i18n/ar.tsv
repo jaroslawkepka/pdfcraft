@@ -2816,3 +2816,4 @@ certificate	Version	الإصدار
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	اليوم
 @plural	{n} reply|{n} replies	{n} رد|{n} رد|{n} ردّان|{n} ردود|{n} ردًا|{n} رد
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	قد يعترض Spotlight في macOS الاختصار {key}. غيّر اختصاره في إعدادات النظام → لوحة المفاتيح → اختصارات لوحة المفاتيح → Spotlight.

@@ -2801,3 +2801,5 @@ theme	Appearance	Išvaizda
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Šiandien
 @plural	{n} reply|{n} replies	{n} atsakymas|{n} atsakymai|{n} atsakymų
+# AI-assisted Spotlight help addition (2026-10-19), not separately native-reviewed.
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	„macOS“ sistemos „Spotlight“ gali perimti {key}. Pakeiskite jo spartųjį klavišą skiltyje Sistemos nuostatos → Klaviatūra → Spartieji klavišai → Spotlight.

@@ -2540,3 +2540,4 @@ animation effects	Off	オフ
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	今日
 @plural	{n} reply|{n} replies	{n} 件の返信
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	macOS の Spotlight が {key} を受け取る場合があります。システム設定 → キーボード → キーボードショートカット → Spotlight でショートカットを変更してください。

@@ -2825,3 +2825,4 @@ theme	Appearance	Aparência
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Hoje
 @plural	{n} reply|{n} replies	{n} resposta|{n} respostas
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	O Spotlight do macOS pode interceptar {key}. Altere o atalho em Ajustes do Sistema → Teclado → Atalhos de Teclado → Spotlight.

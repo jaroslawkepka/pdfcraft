@@ -2772,3 +2772,4 @@ certificate	SHA-256 digest	Impronta SHA-256
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Oggi
 @plural	{n} reply|{n} replies	{n} risposta|{n} risposte
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	Spotlight di macOS può intercettare {key}. Modifica la sua scorciatoia in Impostazioni di Sistema → Tastiera → Abbreviazioni da tastiera → Spotlight.

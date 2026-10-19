@@ -2538,3 +2538,4 @@ animation effects	Off	Өшірулі
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Бүгін
 @plural	{n} reply|{n} replies	{n} жауап|{n} жауап
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	macOS жүйесіндегі Spotlight {key} пернелер тіркесімін ұстап қалуы мүмкін. Оның тіркесімін Жүйе параметрлері → Пернетақта → Пернелер тіркесімдері → Spotlight бөлімінде өзгертіңіз.

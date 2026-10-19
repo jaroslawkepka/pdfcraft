@@ -2536,3 +2536,4 @@ animation effects	Off	Kapalı
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Bugün
 @plural	{n} reply|{n} replies	{n} yanıt
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	macOS Spotlight, {key} kısayolunu yakalayabilir. Kısayolunu Sistem Ayarları → Klavye → Klavye Kestirmeleri → Spotlight bölümünden değiştirin.

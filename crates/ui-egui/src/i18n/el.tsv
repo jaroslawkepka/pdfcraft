@@ -2546,3 +2546,4 @@ animation effects	Off	Ανενεργά
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Σήμερα
 @plural	{n} reply|{n} replies	{n} απάντηση|{n} απαντήσεις
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	Το Spotlight στο macOS μπορεί να δεσμεύει το {key}. Αλλάξτε τη συντόμευσή του στις Ρυθμίσεις συστήματος → Πληκτρολόγιο → Συντομεύσεις πληκτρολογίου → Spotlight.

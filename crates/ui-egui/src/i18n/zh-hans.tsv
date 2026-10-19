@@ -2504,3 +2504,4 @@ animation effects	Off	关
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	今天
 @plural	{n} reply|{n} replies	{n} 条回复
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	macOS 的 Spotlight 可能会拦截 {key}。请在系统设置 → 键盘 → 键盘快捷键 → Spotlight 中更改其快捷键。

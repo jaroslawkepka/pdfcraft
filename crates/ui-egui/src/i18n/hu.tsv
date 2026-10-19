@@ -2539,3 +2539,4 @@ animation effects	Off	Ki
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Ma
 @plural	{n} reply|{n} replies	{n} válasz|{n} válasz
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	A macOS Spotlight elfoghatja a(z) {key} billentyűparancsot. Módosítsa a billentyűparancsát itt: Rendszerbeállítások → Billentyűzet → Billentyűparancsok → Spotlight.

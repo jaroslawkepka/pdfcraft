@@ -2806,3 +2806,4 @@ certificate	Version	Version
 # Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	Aujourd'hui
 @plural	{n} reply|{n} replies	{n} réponse|{n} réponses
+	macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.	Spotlight sous macOS peut intercepter {key}. Modifiez son raccourci dans Réglages Système → Clavier → Raccourcis clavier → Spotlight.
