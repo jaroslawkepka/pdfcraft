@@ -3095,6 +3095,7 @@ impl PdfCraftApp {
     fn tool_keys(&mut self, ctx: &egui::Context) {
         use egui::{Key, Modifiers};
         let view = self.active.and_then(|i| self.views.get(i));
+        let partner = self.active.and_then(|i| compare_ui::side_by_side(self, i)).and_then(|(old, _)| self.views.get(old));
         let free = !self.modal_open() && !self.palette_open && !ctx.egui_wants_keyboard_input() && view.is_some_and(|v| v.forms.focus.is_none());
         let (modifiers, space) = ctx.input(|input| (input.modifiers, input.key_down(Key::Space)));
         let plain = modifiers.is_none();
@@ -3112,7 +3113,10 @@ impl PdfCraftApp {
             && temporary != Some(QuickTool::MarqueeZoom)
             && self.quick_tool == QuickTool::MarqueeZoom
             && self.space_tool.is_some_and(|(_, tool)| tool == QuickTool::MarqueeZoom)
-            && ctx.input(|input| input.pointer.primary_clicked() || (view.is_some_and(|v| v.marquee.is_some()) && input.pointer.any_released()))
+            && ctx.input(|input| {
+                input.pointer.primary_clicked()
+                    || ((view.is_some_and(|v| v.marquee.is_some()) || partner.is_some_and(|v| v.marquee.is_some())) && input.pointer.any_released())
+            })
         {
             // Pointer-up and shortcut-up can arrive together: finish the click or rectangle,
             // then restore the tool on the next frame even if there is no further input.
@@ -3332,12 +3336,13 @@ impl eframe::App for PdfCraftApp {
         // Scrolling and group-drag previews are transient: never resume after changing tabs,
         // opening a modal/palette, or returning to a window that lost focus.
         let blocked = self.modal_open() || self.palette_open || !ctx.input(|i| i.focused);
+        let partner = self.active.and_then(|i| compare_ui::side_by_side(self, i)).map(|(old, _)| old);
         for (index, view) in self.views.iter_mut().enumerate() {
             view.objects.set_input_blocked(blocked || self.active != Some(index));
             if blocked || self.active != Some(index) {
                 view.auto_scroll.cancel();
             }
-            if self.active != Some(index) {
+            if self.active != Some(index) && (blocked || partner != Some(index)) {
                 // Marquee gestures end when their document loses input ownership.
                 view.marquee = None;
                 view.marquee_done = None;

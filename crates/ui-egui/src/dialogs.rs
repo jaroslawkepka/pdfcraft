@@ -1158,6 +1158,17 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         }
                     });
                 });
+                if crate::commands::mac_shortcuts(ui.ctx()) {
+                    ui.add_space(8.0);
+                    let note = crate::commands::key_tip(
+                        ui.ctx(),
+                        tl!(
+                            "macOS Spotlight may intercept {key}. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight."
+                        ),
+                        MARQUEE_ZOOM,
+                    );
+                    ui.add(egui::Label::new(egui::RichText::new(note).color(t.text_muted)).wrap());
+                }
             }
             Dialog::About => {
                 // Tabs About · Contributors · Models (craftrules standards/contributors.md).

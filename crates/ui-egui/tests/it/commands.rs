@@ -429,6 +429,23 @@ fn the_shortcuts_dialog_lists_the_real_bindings() {
 }
 
 #[test]
+fn the_shortcuts_dialog_explains_the_macos_spotlight_conflict() {
+    let mut h = harness();
+    h.state_mut().execute("help.shortcuts");
+    for os in [OperatingSystem::Mac, OperatingSystem::Windows, OperatingSystem::Nix] {
+        h.ctx.set_os(os);
+        h.run_steps(3);
+        if os == OperatingSystem::Mac {
+            h.get_by_label(
+                "macOS Spotlight may intercept ⌘Space. Change its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight.",
+            );
+        } else {
+            assert_eq!(h.query_all_by_label_contains("Spotlight").count(), 0, "Spotlight help is specific to macOS");
+        }
+    }
+}
+
+#[test]
 fn localized_shortcuts_update_immediately_and_keep_command_ids_and_key_bindings() {
     let mut h = harness();
     h.ctx.set_os(OperatingSystem::Windows);

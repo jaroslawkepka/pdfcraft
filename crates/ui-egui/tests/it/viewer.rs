@@ -1582,6 +1582,134 @@ fn temporary_marquee_zoom_tab_change_cancels_the_old_gesture() {
     }
 }
 
+fn marquee_compare_harness() -> Harness<'static, PdfCraftApp> {
+    use pdfcraft_ui_egui::{QuickTool, canvas::Fit};
+    let mut h = harness();
+    h.state_mut().compare_old = Some(h.state().views[0].id);
+    h.state_mut().run_compare();
+    for view in &mut h.state_mut().views {
+        view.fit = Fit::Page;
+    }
+    h.state_mut().quick_tool = QuickTool::Crop;
+    h.run_steps(4);
+    assert!(h.state().compare.as_ref().unwrap().side_by_side);
+    assert_eq!(h.state().active, Some(1), "the new file remains the active document");
+    h
+}
+
+#[test]
+fn temporary_marquee_zoom_compare_partner_keeps_the_drag() {
+    use egui::{Event, Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    let mut h = marquee_compare_harness();
+    let partner = 0;
+    let view = &h.state().views[partner];
+    assert!(view.viewport_rect().right() < h.state().views[1].viewport_rect().left());
+    let start = view.page_screen_rect(0).unwrap().intersect(view.viewport_rect()).center();
+    let end = start + egui::vec2(40.0, 30.0);
+    let before = view.zoom;
+    h.event(Event::ModifiersChanged(Modifiers::COMMAND));
+    h.key_down(Key::Space);
+    h.hover_at(start);
+    h.drag_at(start);
+    h.run_steps(2);
+    h.hover_at(end);
+    h.run_steps(1);
+    let origin = h.state().views[partner].marquee.expect("the compare partner starts a real drag");
+    h.run_steps(2);
+    assert_eq!(h.state().views[partner].marquee, Some(origin), "normal logic passes must keep the interactive partner's drag origin");
+    h.hover_at(end + egui::vec2(10.0, 10.0));
+    h.run_steps(2);
+    h.drop_at(end + egui::vec2(10.0, 10.0));
+    h.run_steps(3);
+    assert!(h.state().views[partner].zoom > before * 2.0, "the partner completes rectangle zoom");
+    assert!(h.state().views[partner].marquee.is_none());
+    assert_eq!(h.state().active, Some(1), "interacting with the old pane does not change tabs");
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Hand);
+    h.key_up(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Crop);
+    assert!(h.state().views.iter().all(|v| !h.state().session.get(v.id).unwrap().dirty));
+}
+
+#[test]
+fn temporary_marquee_zoom_compare_partner_release_together() {
+    use egui::{Event, Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    let mut h = marquee_compare_harness();
+    let view = &h.state().views[0];
+    let start = view.page_screen_rect(0).unwrap().intersect(view.viewport_rect()).center();
+    let end = start + egui::vec2(40.0, 30.0);
+    let before = view.zoom;
+    h.event(Event::ModifiersChanged(Modifiers::COMMAND));
+    h.key_down(Key::Space);
+    h.hover_at(start);
+    h.drag_at(start);
+    h.run_steps(2);
+    h.hover_at(end);
+    h.run_steps(2);
+    assert!(h.state().views[0].marquee.is_some());
+    h.input_mut().events.extend([
+        Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::COMMAND },
+        Event::Key { key: Key::Space, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+        Event::ModifiersChanged(Modifiers::NONE),
+    ]);
+    h.run_steps(3);
+    assert!(h.state().views[0].zoom > before * 2.0, "the completed partner drag must zoom before shortcut restoration");
+    assert_eq!(h.state().quick_tool, QuickTool::Crop);
+    assert!(h.state().views.iter().all(|v| v.marquee.is_none() && v.marquee_done.is_none()));
+}
+
+#[test]
+fn marquee_zoom_blocked_compare_partner_cancels_the_drag() {
+    use egui::{Event, Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    for (temporary, blocker) in [false, true].into_iter().flat_map(|temporary| (0..3).map(move |blocker| (temporary, blocker))) {
+        let mut h = marquee_compare_harness();
+        let view = &h.state().views[0];
+        let start = view.page_screen_rect(0).unwrap().intersect(view.viewport_rect()).center();
+        let end = start + egui::vec2(40.0, 30.0);
+        let before = view.zoom;
+        if temporary {
+            h.event(Event::ModifiersChanged(Modifiers::COMMAND));
+            h.key_down(Key::Space);
+        } else {
+            // Manual Marquee has no temporary-tool cleanup to mask a missing blocked check.
+            assert!(h.state_mut().execute("view.marquee_zoom"));
+        }
+        h.hover_at(start);
+        h.drag_at(start);
+        h.run_steps(2);
+        h.hover_at(end);
+        h.run_steps(1);
+        assert!(h.state().views[0].marquee.is_some());
+        match blocker {
+            0 => h.state_mut().dialog = Some(Dialog::About),
+            1 => h.state_mut().palette_open = true,
+            _ => {
+                h.input_mut().focused = false;
+                h.event(Event::WindowFocused(false));
+            }
+        }
+        h.run_steps(2);
+        assert!(h.state().views[0].marquee.is_none(), "a blocked compare pane loses its gesture");
+        assert_eq!(h.state().quick_tool, if temporary { QuickTool::Crop } else { QuickTool::MarqueeZoom });
+        h.drop_at(end);
+        h.key_up(Key::Space);
+        h.event(Event::ModifiersChanged(Modifiers::NONE));
+        h.run_steps(2);
+        h.state_mut().palette_open = false;
+        h.state_mut().dialog = None;
+        h.input_mut().focused = true;
+        h.event(Event::WindowFocused(true));
+        h.run_steps(2);
+        assert_eq!(h.state().views[0].zoom, before, "unblocking does not finish the abandoned rectangle");
+        assert!(h.state().views.iter().all(|v| v.marquee.is_none() && v.marquee_done.is_none()));
+    }
+}
+
 #[test]
 fn temporary_marquee_zoom_closing_all_documents_restores_the_tool() {
     use egui::{Event, Key, Modifiers};
