@@ -25,7 +25,9 @@ use sctk::reexports::client::protocol::wl_data_device::{self, WlDataDevice};
 use sctk::reexports::client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceManager};
 use sctk::reexports::client::protocol::wl_data_offer::{self, WlDataOffer};
 use sctk::reexports::client::protocol::wl_surface::WlSurface;
-use sctk::reexports::client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum};
+use sctk::reexports::client::{
+    event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum,
+};
 use tracing::warn;
 
 use crate::dpi::{LogicalPosition, PhysicalPosition};
@@ -98,7 +100,7 @@ impl DndState {
         true
     }
 
-    fn take_drop(&mut self, window: WindowId, scale: f64) -> Option<(ObjectId, DropBatch)> {
+    fn take_drop(&mut self, window: WindowId, scale: f64) -> Option<(ObjectId, Option<DropBatch>)> {
         if !scale.is_finite() || scale <= 0.0 {
             return None;
         }
@@ -109,21 +111,24 @@ impl DndState {
         let id = self.ready.get(index)?.clone();
         let offer = self.offers.get_mut(&id)?;
         if !offer.copy_selected() {
-            return None;
+            // Return rejected offers too so WinitState runs the full dnd_remove cleanup.
+            return Some((id, None));
         }
         let position = offer.position?;
         let paths = offer.data.take_drop()?;
         self.ready.remove(index);
         let device_id = crate::event::DeviceId(crate::platform_impl::DeviceId::Wayland(DeviceId));
-        let restore = self
-            .cursors
-            .get(&window)
-            .cloned()
-            .unwrap_or(WindowEvent::CursorLeft { device_id });
-        Some((id, DropBatch { position: position.to_physical(scale), paths, restore }))
+        let restore =
+            self.cursors.get(&window).cloned().unwrap_or(WindowEvent::CursorLeft { device_id });
+        Some((id, Some(DropBatch { position: position.to_physical(scale), paths, restore })))
     }
 
-    fn publish_hover(&mut self, window: WindowId, paths: Vec<PathBuf>, sink: &mut EventSink) -> bool {
+    fn publish_hover(
+        &mut self,
+        window: WindowId,
+        paths: Vec<PathBuf>,
+        sink: &mut EventSink,
+    ) -> bool {
         let previous = self.hovered.get(&window).map(Vec::as_slice).unwrap_or_default();
         if previous == paths {
             return false;
@@ -373,10 +378,12 @@ impl WinitState {
             return None;
         }
         let (id, batch) = self.dnd.take_drop(window, scale)?;
-        // DroppedFile clears egui's entire hover list. Republish any newer drag after the batch.
-        self.dnd.hovered.remove(&window);
-        self.dnd_remove(&id, true);
-        Some(batch)
+        if batch.is_some() {
+            // DroppedFile clears egui's entire hover list. Republish any newer drag after the batch.
+            self.dnd.hovered.remove(&window);
+        }
+        self.dnd_remove(&id, batch.is_some());
+        batch
     }
 
     fn dnd_read(&mut self, id: &ObjectId) -> io::Result<()> {
@@ -708,7 +715,8 @@ mod tests {
         // The completion wakes this iteration, but an outstanding frame callback prevents drawing.
         let mut frame = FrameCallbackState::Requested;
         assert!(matches!(frame, FrameCallbackState::Requested));
-        let mut dispatched_events = false; // single_iteration resets this before waiting again.
+        // single_iteration resets this before waiting again.
+        let mut dispatched_events = false;
         // CompositorHandler::frame uses this exact flag to wake the loop; no input event follows.
         if requests.redraw_requested.load(Ordering::Relaxed) {
             dispatched_events = true;
@@ -717,7 +725,7 @@ mod tests {
         assert!(dispatched_events, "the frame callback must wake delivery without another input");
         assert!(matches!(frame, FrameCallbackState::Received));
         assert!(requests.take_redraw_requested());
-        let (_, batch) = dnd.take_drop(window, 1.0).unwrap();
+        let batch = dnd.take_drop(window, 1.0).unwrap().1.unwrap();
         let mut delivered = Vec::new();
         batch.dispatch(|event| {
             if let WindowEvent::DroppedFile(path) = event {
@@ -726,6 +734,88 @@ mod tests {
         });
         assert_eq!(delivered, [PathBuf::from("/tmp/deferred.pdf")]);
         assert!(!dnd.has_ready_drop(window));
+    }
+
+    #[test]
+    fn ready_drop_losing_copy_selection_is_removed() {
+        use sctk::reexports::client::globals::registry_queue_init;
+        use sctk::reexports::client::protocol::{wl_compositor::WlCompositor, wl_shm::WlShm};
+        use sctk::reexports::protocols::xdg::shell::client::xdg_wm_base::XdgWmBase;
+        use std::sync::Arc;
+        use wayland_backend::server::{self, Backend, GlobalHandler};
+
+        // Advertise only the globals needed to construct the real WinitState. Bind requests
+        // stay queued on the client; the fixture dispatches only initial registry discovery.
+        struct RegistryOnly;
+        impl GlobalHandler<()> for RegistryOnly {
+            fn bind(
+                self: Arc<Self>,
+                _: &server::Handle,
+                _: &mut (),
+                _: server::ClientId,
+                _: server::GlobalId,
+                _: server::ObjectId,
+            ) -> Arc<dyn server::ObjectData<()>> {
+                unreachable!("this fixture only dispatches registry discovery");
+            }
+        }
+        let (socket, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut backend = Backend::<()>::new().unwrap();
+        let client = backend.handle().insert_client(peer, Arc::new(())).unwrap();
+        for interface in [WlCompositor::interface(), WlShm::interface(), XdgWmBase::interface()] {
+            backend.handle().create_global(interface, 1, Arc::new(RegistryOnly));
+        }
+        let connection = Connection::from_socket(socket).unwrap();
+        let init_connection = connection.clone();
+        let init = std::thread::spawn(move || registry_queue_init::<WinitState>(&init_connection));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !init.is_finished() {
+            assert!(std::time::Instant::now() < deadline, "registry discovery timed out");
+            backend.dispatch_all_clients(&mut ()).unwrap();
+            backend.flush(Some(client.clone())).unwrap();
+            std::thread::yield_now();
+        }
+        let (globals, queue) = init.join().unwrap().unwrap();
+        let qh = queue.handle();
+        let event_loop = calloop::EventLoop::<WinitState>::try_new().unwrap();
+        let mut state = WinitState::new(&globals, &qh, event_loop.handle()).unwrap();
+        let registry = globals.registry();
+        let device: WlDataDevice = registry.bind(1, 3, &qh, ());
+        let proxy: WlDataOffer = registry.bind(2, 3, &qh, ());
+        let id = proxy.id();
+        let window = WindowId(1);
+        let mut offer = Offer::new(proxy.clone(), device.id());
+        offer.window = Some(window);
+        offer.position = Some(LogicalPosition::new(400.0, 300.0));
+        offer.action = DndAction::Copy;
+        offer.source_actions = DndAction::Copy;
+        offer.data.dropped = true;
+        offer.data.append(b"file:///tmp/rejected.pdf\n").unwrap();
+        assert!(offer.data.read_done());
+        state.dnd.offers.insert(id.clone(), offer);
+        let requests = Arc::new(WindowRequests {
+            closed: AtomicBool::new(false),
+            redraw_requested: AtomicBool::new(false),
+        });
+        state.window_requests.get_mut().insert(window, requests.clone());
+        assert!(state.dnd.queue_drop(&id, &requests));
+        assert!(state.dnd.has_ready_drop(window));
+        assert!(requests.take_redraw_requested());
+
+        state.dnd.offers.get_mut(&id).unwrap().action = DndAction::Move;
+        assert!(
+            state.dnd_take_drop(window, 1.0).is_none(),
+            "recheck Copy before deferred delivery"
+        );
+        assert!(state.dnd.ready.is_empty(), "a rejected drop must not remain queued");
+        assert!(!state.dnd.offers.contains_key(&id), "a rejected offer must be removed");
+        assert!(!proxy.is_alive(), "the rejected offer's protocol object must be destroyed");
+        assert!(
+            !state.dnd.has_ready_drop(window),
+            "a rejected drop must not trigger further redraws"
+        );
+        assert!(state.dnd_take_drop(window, 1.0).is_none());
+        assert!(!requests.take_redraw_requested());
     }
 
     #[test]
@@ -766,15 +856,11 @@ mod tests {
         for offer in dnd.offers.values_mut() {
             assert!(offer.data.read_done());
         }
-        let id = dnd.ready.front().unwrap().clone();
-        dnd.offers.get_mut(&id).unwrap().action = DndAction::Move;
-        assert!(dnd.take_drop(window, 2.0).is_none(), "recheck Copy before deferred delivery");
-        dnd.offers.get_mut(&id).unwrap().action = DndAction::Copy;
         let mut cursor = Some(current);
         let mut files = Vec::new();
         let mut frames = Vec::new();
         for expected in [PhysicalPosition::new(800.0, 600.0), PhysicalPosition::new(160.0, 400.0)] {
-            let (_, batch) = dnd.take_drop(window, 2.0).unwrap();
+            let batch = dnd.take_drop(window, 2.0).unwrap().1.unwrap();
             batch.dispatch(|event| match event {
                 WindowEvent::CursorMoved { position, .. } => cursor = Some(position),
                 WindowEvent::CursorLeft { .. } => cursor = None,
@@ -801,12 +887,18 @@ mod tests {
             position: PhysicalPosition::new(200.0, 100.0),
             paths: vec![PathBuf::from("/tmp/a.pdf"), PathBuf::from("/tmp/b.pdf")],
             restore: WindowEvent::CursorLeft { device_id },
-        }.dispatch(|event| events.push(event));
-        assert!(matches!(events.as_slice(), [
-            WindowEvent::CursorMoved { .. }, WindowEvent::DroppedFile(_),
-            WindowEvent::DroppedFile(_), WindowEvent::RedrawRequested,
-            WindowEvent::CursorLeft { .. }
-        ]));
+        }
+        .dispatch(|event| events.push(event));
+        assert!(matches!(
+            events.as_slice(),
+            [
+                WindowEvent::CursorMoved { .. },
+                WindowEvent::DroppedFile(_),
+                WindowEvent::DroppedFile(_),
+                WindowEvent::RedrawRequested,
+                WindowEvent::CursorLeft { .. }
+            ]
+        ));
     }
 
     #[test]
@@ -820,11 +912,14 @@ mod tests {
         assert!(!dnd.publish_hover(window, paths, &mut sink));
         assert!(dnd.publish_hover(window, Vec::new(), &mut sink));
         assert!(!dnd.publish_hover(window, Vec::new(), &mut sink));
-        assert!(matches!(sink.window_events.as_slice(), [
-            Event::WindowEvent { event: WindowEvent::HoveredFile(_), .. },
-            Event::WindowEvent { event: WindowEvent::HoveredFile(_), .. },
-            Event::WindowEvent { event: WindowEvent::HoveredFileCancelled, .. }
-        ]));
+        assert!(matches!(
+            sink.window_events.as_slice(),
+            [
+                Event::WindowEvent { event: WindowEvent::HoveredFile(_), .. },
+                Event::WindowEvent { event: WindowEvent::HoveredFile(_), .. },
+                Event::WindowEvent { event: WindowEvent::HoveredFileCancelled, .. }
+            ]
+        ));
     }
 
     #[test]
@@ -838,9 +933,10 @@ mod tests {
         // DroppedFile clears egui's hover list; dnd_take_drop forgets that published state.
         dnd.hovered.remove(&window);
         assert!(dnd.publish_hover(window, paths, &mut sink));
-        assert!(matches!(sink.window_events.as_slice(), [
-            Event::WindowEvent { event: WindowEvent::HoveredFile(_), .. }
-        ]));
+        assert!(matches!(
+            sink.window_events.as_slice(),
+            [Event::WindowEvent { event: WindowEvent::HoveredFile(_), .. }]
+        ));
     }
 
     #[test]
