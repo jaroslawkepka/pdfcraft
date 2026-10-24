@@ -24,7 +24,7 @@ vendors below retain their independent path patches and licenses.
 
 Permissively licensed crates we carry small patches for. Each directory keeps the upstream
 licence files unchanged. Every patch is marked `PdfCraft patch:` in the source, is covered by a
-PdfCraft test, and should be proposed upstream. Remove the vendored copy once upstream releases
+PdfCraft test or focused tests in the vendored crate, and should be proposed upstream. Remove the vendored copy once upstream releases
 the fix. Vendoring copyleft code is never allowed (plan/adr/0001).
 
 A PdfCraft patch in `hayro-syntax::Page::base_dimensions` expresses the existing one-point floor as a raw reciprocal of `/UserUnit`, rounded upward only when f32 multiplication would fall below one point. Five `pdfcraft-render` regressions with prefix `raster::tests::raw_crop_` cover the observed dimensions, origins and rotations, units 41/47, bounded vector rasters and unchanged nearly-zero A4 fallback. Accepted page-unit policy and licences are unchanged.
