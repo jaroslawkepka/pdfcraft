@@ -2851,6 +2851,7 @@ impl PdfCraftApp {
                 v.select_pages(&pages);
             }
             ("notice", Some(v)) => v.notice_dismissed = value == "off",
+            ("quick", _) if value == "marquee-zoom" => self.select_marquee_zoom(),
             ("quick", _) => {
                 // `--quick select|hand|note|freetext|highlight|underline|strikeout|ink|line|arrow|square|circle`
                 self.quick_tool = match value {
@@ -2866,7 +2867,6 @@ impl PdfCraftApp {
                     "edit-text" => QuickTool::EditText,
                     "link" => QuickTool::Link,
                     "sign" => QuickTool::SignArea { certify: false },
-                    "marquee-zoom" => QuickTool::MarqueeZoom,
                     "snapshot" => QuickTool::Snapshot,
                     "column-select" => QuickTool::ColumnSelect,
                     "certify" => QuickTool::SignArea { certify: true },
@@ -3088,6 +3088,14 @@ impl PdfCraftApp {
         }
         ctx.copy_text(text);
         true
+    }
+
+    fn select_marquee_zoom(&mut self) {
+        self.quick_tool = QuickTool::MarqueeZoom;
+        // Retain the held-key marker, but stop restoring the old persistent tool.
+        if let Some((previous, QuickTool::MarqueeZoom)) = &mut self.space_tool {
+            *previous = None;
+        }
     }
 
     /// V selects, H pans, Space temporarily pans, and Ctrl/⌘+Space temporarily zooms. Text
