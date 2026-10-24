@@ -1312,6 +1312,49 @@ fn temporary_marquee_zoom_restores_the_selected_tool() {
 }
 
 #[test]
+fn temporary_marquee_zoom_command_preserves_persistent_tool_choices() {
+    use egui::{Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    for command in [Modifiers::CTRL | Modifiers::COMMAND, Modifiers::MAC_CMD | Modifiers::COMMAND] {
+        for release_command_first in [false, true] {
+            for choose_snapshot_afterwards in [false, true] {
+                let mut h = harness();
+                assert_eq!(h.state().quick_tool, QuickTool::Select);
+                h.event(egui::Event::ModifiersChanged(command));
+                h.key_down(Key::Space);
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, QuickTool::MarqueeZoom);
+                // The View menu uses this same public command dispatch.
+                assert!(h.state_mut().execute("view.marquee_zoom"));
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, QuickTool::MarqueeZoom);
+                let persistent = if choose_snapshot_afterwards {
+                    assert!(h.state_mut().execute("edit.snapshot"));
+                    h.run_steps(2);
+                    assert_eq!(h.state().quick_tool, QuickTool::Snapshot, "held keys must not override a later deliberate choice");
+                    QuickTool::Snapshot
+                } else {
+                    QuickTool::MarqueeZoom
+                };
+                if release_command_first {
+                    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+                    h.run_steps(2);
+                    assert_eq!(h.state().quick_tool, QuickTool::Hand, "Space still temporarily pans");
+                    h.key_up(Key::Space);
+                } else {
+                    h.key_up(Key::Space);
+                    h.run_steps(2);
+                    assert_eq!(h.state().quick_tool, persistent, "Space release preserves the explicit command selection");
+                    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+                }
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, persistent, "the deliberate persistent tool survives shortcut release");
+            }
+        }
+    }
+}
+
+#[test]
 fn space_then_command_preserves_the_original_tool() {
     use egui::{Key, Modifiers};
     use pdfcraft_ui_egui::QuickTool;

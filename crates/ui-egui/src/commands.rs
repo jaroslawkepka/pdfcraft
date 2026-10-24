@@ -543,7 +543,13 @@ impl PdfCraftApp {
                     self.notify_fmt("Couldn't fit the visible content: {e}", &[("e", &e.to_string())]);
                 }
             }
-            "view.marquee_zoom" => self.quick_tool = crate::QuickTool::MarqueeZoom,
+            "view.marquee_zoom" => {
+                self.quick_tool = crate::QuickTool::MarqueeZoom;
+                // Retain the held-key marker, but stop restoring the old persistent tool.
+                if let Some((previous, crate::QuickTool::MarqueeZoom)) = &mut self.space_tool {
+                    *previous = None;
+                }
+            }
             "edit.column_select" => self.quick_tool = crate::QuickTool::ColumnSelect,
             "edit.snapshot" => {
                 self.quick_tool = crate::QuickTool::Snapshot;
