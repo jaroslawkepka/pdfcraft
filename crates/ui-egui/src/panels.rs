@@ -195,7 +195,7 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
             {
                 app.form_preview = !app.form_preview;
                 if app.form_preview {
-                    app.quick_tool = crate::QuickTool::Select;
+                    app.select_quick_tool(crate::QuickTool::Select);
                 }
             }
         });
@@ -514,7 +514,7 @@ fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     }
                 }
                 if theme::hand(resp).clicked() {
-                    app.quick_tool = crate::QuickTool::Stamp(kind);
+                    app.select_quick_tool(crate::QuickTool::Stamp(kind));
                 }
             }
         }

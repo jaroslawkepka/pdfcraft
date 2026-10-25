@@ -306,7 +306,7 @@ impl PdfCraftApp {
             tool if crate::comments::CommentTool::from_command(tool).is_some() => {
                 let Some(tool) = crate::comments::CommentTool::from_command(tool) else { return false };
                 self.comment_prefs.group_tool[tool.group()] = tool;
-                self.quick_tool = crate::QuickTool::Comment(tool);
+                self.select_quick_tool(crate::QuickTool::Comment(tool));
                 // Acrobat opens the Comments panel with the commenting tools, unless the user closed it.
                 if self.right.is_none() && !self.comments_panel_closed {
                     self.choose_right_panel(Some(RightPanel::Comments));
@@ -429,7 +429,7 @@ impl PdfCraftApp {
             "app.preferences" => self.dialog = Some(Dialog::Preferences),
             "ocr.recognize_batch" => self.ocr_files_dialog(),
             "edit.edit_text" => {
-                self.quick_tool = crate::QuickTool::EditText;
+                self.select_quick_tool(crate::QuickTool::EditText);
                 self.left = crate::LeftPanel::Tool("edit");
                 self.reveal_tools();
                 self.notify_tr("Click text or an image to edit it");
@@ -454,19 +454,19 @@ impl PdfCraftApp {
             "a11y.reading_options" => self.dialog = Some(Dialog::Properties(crate::PropsTab::Advanced)),
             "export.all_images" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::AllImages)),
             "edit.text" => {
-                self.quick_tool = crate::QuickTool::AddText;
+                self.select_quick_tool(crate::QuickTool::AddText);
                 self.left = crate::LeftPanel::Tool("edit");
                 self.reveal_tools();
             }
             "edit.image" => self.add_image_dialog(),
             "edit.link" => {
-                self.quick_tool = crate::QuickTool::Link;
+                self.select_quick_tool(crate::QuickTool::Link);
                 self.notify_tr("Drag a rectangle to create a link; double-click a link to edit it");
             }
             "edit.links_from_urls" => self.links_from_urls(),
             "edit.remove_links" => self.remove_all_links(),
             "redact.mark" => {
-                self.quick_tool = crate::QuickTool::Redact;
+                self.select_quick_tool(crate::QuickTool::Redact);
                 self.left = crate::LeftPanel::Tool("redact");
                 self.reveal_tools();
                 // A text selection made first is marked right away.
@@ -528,7 +528,7 @@ impl PdfCraftApp {
             "comment.summarize" => self.dialog = Some(Dialog::SummarizeComments),
             "sign.digital" | "sign.certify" => {
                 let certify = id == "sign.certify";
-                self.quick_tool = crate::QuickTool::SignArea { certify };
+                self.select_quick_tool(crate::QuickTool::SignArea { certify });
                 self.notify_tr("Drag to draw the area where the signature should appear.");
             }
             "sign.certify_invisible" => {
@@ -549,10 +549,10 @@ impl PdfCraftApp {
                     self.notify_fmt("Couldn't fit the visible content: {e}", &[("e", &e.to_string())]);
                 }
             }
-            "view.marquee_zoom" => self.select_marquee_zoom(),
-            "edit.column_select" => self.quick_tool = crate::QuickTool::ColumnSelect,
+            "view.marquee_zoom" => self.select_quick_tool(crate::QuickTool::MarqueeZoom),
+            "edit.column_select" => self.select_quick_tool(crate::QuickTool::ColumnSelect),
             "edit.snapshot" => {
-                self.quick_tool = crate::QuickTool::Snapshot;
+                self.select_quick_tool(crate::QuickTool::Snapshot);
                 self.notify_tr("Drag a rectangle around the area to copy");
             }
             "edit.copy" => {
@@ -612,7 +612,7 @@ impl PdfCraftApp {
             }
             field if crate::prepare::FieldTool::from_command(field).is_some() => {
                 let Some(tool) = crate::prepare::FieldTool::from_command(field) else { return false };
-                self.quick_tool = crate::QuickTool::Field(tool);
+                self.select_quick_tool(crate::QuickTool::Field(tool));
                 self.left = crate::LeftPanel::Tool("form");
                 self.reveal_tools();
                 if let Some(i) = active {
@@ -636,7 +636,7 @@ impl PdfCraftApp {
             }
             fill if crate::fill_sign::FillTool::from_command(fill).is_some() => {
                 let Some(tool) = crate::fill_sign::FillTool::from_command(fill) else { return false };
-                self.quick_tool = crate::QuickTool::Fill(tool);
+                self.select_quick_tool(crate::QuickTool::Fill(tool));
                 let initials = tool == crate::fill_sign::FillTool::Initials;
                 if (tool == crate::fill_sign::FillTool::Signature && self.signature.is_none()) || (initials && self.initials.is_none()) {
                     self.signature_draft = crate::fill_sign::SigDraft::new(initials, &self.comment_prefs.author);
@@ -662,7 +662,7 @@ impl PdfCraftApp {
             "ocr.enhance_camera" => {
                 // The corners start on the document's edges when they can be found, else
                 // inset on the current page (camera_ui::page_input).
-                self.quick_tool = crate::QuickTool::EnhanceCamera;
+                self.select_quick_tool(crate::QuickTool::EnhanceCamera);
                 if let Some(i) = self.active
                     && let Some(view) = self.views.get_mut(i)
                     && let Some(page) = self.session.get(view.id).and_then(|d| d.info.pages.get(view.current).cloned())
@@ -677,7 +677,7 @@ impl PdfCraftApp {
                 self.notify_tr("Drag the corners onto the document's edges, then choose Enhance page.");
             }
             "page.crop" => {
-                self.quick_tool = crate::QuickTool::Crop;
+                self.select_quick_tool(crate::QuickTool::Crop);
                 if let Some(v) = active.and_then(|i| self.views.get_mut(i)) {
                     v.organize = false;
                 }

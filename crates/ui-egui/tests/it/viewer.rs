@@ -1277,6 +1277,199 @@ fn v_h_and_space_pick_the_quick_tools() {
 }
 
 #[test]
+fn space_tool_keyboard_choices_last_until_a_new_hold() {
+    use egui::{Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    for previous in ["crop", "hand"] {
+        for (key, selected) in [(Key::V, QuickTool::Select), (Key::H, QuickTool::Hand)] {
+            let mut h = harness();
+            h.state_mut().set_option("quick", previous).unwrap();
+            h.key_down(Key::Space);
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, QuickTool::Hand);
+            h.key_press(key);
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, selected, "the explicit keyboard choice wins while Space stays held");
+            h.event(egui::Event::ModifiersChanged(Modifiers::CTRL | Modifiers::COMMAND));
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, selected, "adding a modifier cannot restart the override");
+            h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, selected);
+            h.key_up(Key::Space);
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, selected, "release keeps the explicit choice");
+            h.key_down(Key::Space);
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, QuickTool::Hand, "a new Space hold works normally");
+            h.key_up(Key::Space);
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, selected);
+        }
+    }
+}
+
+#[test]
+fn space_tool_quick_bar_choices_are_persistent() {
+    use egui::Key;
+    use pdfcraft_ui_egui::QuickTool;
+    for (previous, label, selected) in [("crop", "Hand (H)", QuickTool::Hand), ("hand", "Select (V)", QuickTool::Select)] {
+        let mut h = harness();
+        h.state_mut().set_option("quick", previous).unwrap();
+        h.key_down(Key::Space);
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, QuickTool::Hand);
+        h.get_by_label(label).click();
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, selected, "a toolbar choice wins even if no override marker was needed");
+        h.key_up(Key::Space);
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, selected, "selecting the temporary Hand explicitly makes it persistent");
+    }
+}
+
+#[test]
+fn space_tool_full_screen_restores_the_persistent_tool() {
+    use egui::{Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    for modifiers in [Modifiers::NONE, Modifiers::CTRL | Modifiers::COMMAND, Modifiers::MAC_CMD | Modifiers::COMMAND] {
+        for exit_while_held in [false, true] {
+            let mut h = harness();
+            h.state_mut().set_option("quick", "crop").unwrap();
+            h.event(egui::Event::ModifiersChanged(modifiers));
+            h.key_down(Key::Space);
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, if modifiers.is_none() { QuickTool::Hand } else { QuickTool::MarqueeZoom });
+            assert!(h.state_mut().execute("view.full_screen"));
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, QuickTool::Select);
+            h.state_mut().apply_full_screen(true);
+            if exit_while_held {
+                assert!(h.state_mut().execute("view.full_screen"));
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, QuickTool::Crop, "leaving full screen restores the underlying persistent tool");
+            }
+            h.key_up(Key::Space);
+            h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+            h.run_steps(2);
+            if !exit_while_held {
+                assert!(h.state_mut().execute("view.full_screen"));
+                h.run_steps(2);
+            }
+            assert_eq!(h.state().quick_tool, QuickTool::Crop, "full screen must not save a temporary tool as persistent");
+        }
+    }
+}
+
+#[test]
+fn space_tool_leaving_edit_mode_puts_down_the_persistent_edit_tool() {
+    use egui::Key;
+    use pdfcraft_ui_egui::QuickTool;
+    let mut h = harness();
+    h.get_by_label("Edit").click();
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::EditText);
+    h.key_down(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Hand);
+    h.get_by_label("All tools").click();
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Select, "leaving Edit also puts down the editing tool hidden by Hand");
+    h.key_up(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Select);
+}
+
+#[test]
+fn space_tool_palette_choice_survives_keyboard_ownership_changes() {
+    use egui::{Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    let mut h = harness();
+    h.state_mut().set_option("quick", "crop").unwrap();
+    h.event(egui::Event::ModifiersChanged(Modifiers::COMMAND));
+    h.key_down(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::MarqueeZoom);
+    h.state_mut().set_option("palette", "edit.snapshot").unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Crop, "the palette owns the keyboard");
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert!(!h.state().palette_open);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot, "the palette choice wins even after the active override ended");
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
+    h.key_up(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
+}
+
+#[test]
+fn space_tool_choice_survives_tab_modal_and_document_changes() {
+    use egui::{Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    let mut h = harness();
+    h.event(egui::Event::ModifiersChanged(Modifiers::COMMAND));
+    h.key_down(Key::Space);
+    h.run_steps(2);
+    assert!(h.state_mut().execute("edit.snapshot"));
+    assert!(h.state_mut().execute("view.previous_tab"));
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
+    assert!(h.state_mut().execute("app.preferences"));
+    h.run_steps(2);
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
+    assert!(h.state_mut().execute("file.close_all"));
+    h.run_steps(2);
+    assert_eq!(h.state().active, None);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
+    h.state_mut().open_bytes("reopened.pdf", None, fixture(1)).unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot, "reopening during the same hold cannot restart Hand");
+    h.key_up(Key::Space);
+    h.run_steps(2);
+    h.key_down(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Hand);
+    h.key_up(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
+}
+
+#[test]
+fn space_tool_deleting_the_saved_custom_stamp_keeps_select() {
+    use egui::Key;
+    use pdfcraft_ui_egui::QuickTool;
+    let mut h = harness();
+    assert!(h.state_mut().execute("comment.stamp"));
+    h.state_mut().start_custom_stamp("space-stamp.pdf".into(), fixture(1));
+    h.run_steps(2);
+    h.get_by_label("OK").click();
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::CustomStamp(0));
+    h.get_by_label("space-stamp").scroll_to_me();
+    h.run_steps(3);
+    h.key_down(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Hand);
+    h.get_by_label("space-stamp").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Delete stamp").click();
+    h.run_steps(2);
+    assert!(h.state().custom_stamps.is_empty());
+    assert_eq!(h.state().quick_tool, QuickTool::Select);
+    h.key_up(Key::Space);
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Select, "release must not resurrect the deleted stamp");
+}
+
+#[test]
 fn temporary_marquee_zoom_restores_the_selected_tool() {
     use egui::{Key, Modifiers};
     use pdfcraft_ui_egui::QuickTool;
@@ -1341,7 +1534,7 @@ fn temporary_marquee_zoom_command_preserves_persistent_tool_choices() {
                 if release_command_first {
                     h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
                     h.run_steps(2);
-                    assert_eq!(h.state().quick_tool, QuickTool::Hand, "Space still temporarily pans");
+                    assert_eq!(h.state().quick_tool, persistent, "modifier release cannot override an explicit choice");
                     h.key_up(Key::Space);
                 } else {
                     h.key_up(Key::Space);
@@ -1351,6 +1544,12 @@ fn temporary_marquee_zoom_command_preserves_persistent_tool_choices() {
                 }
                 h.run_steps(2);
                 assert_eq!(h.state().quick_tool, persistent, "the deliberate persistent tool survives shortcut release");
+                h.key_down(Key::Space);
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, QuickTool::Hand, "a new hold pans after the explicit choice's hold ended");
+                h.key_up(Key::Space);
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, persistent, "the new hold restores the explicit persistent choice");
             }
         }
     }
@@ -1536,36 +1735,42 @@ fn temporary_marquee_zoom_click_release_zooms_once() {
 fn temporary_marquee_zoom_tool_change_cancels_the_old_gesture() {
     use egui::{Event, Key, Modifiers};
     use pdfcraft_ui_egui::QuickTool;
-    let mut h = harness();
-    h.state_mut().system_clipboard = false;
-    let i = h.state().active.unwrap();
-    let start = h.state().views[i].page_screen_rect(0).unwrap().center();
-    let end = start + egui::vec2(40.0, 30.0);
-    let before = h.state().views[i].zoom;
-    h.event(Event::ModifiersChanged(Modifiers::COMMAND));
-    h.key_down(Key::Space);
-    h.hover_at(start);
-    h.drag_at(start);
-    h.run_steps(2);
-    h.hover_at(end);
-    h.run_steps(2);
-    assert!(h.state().views[i].marquee.is_some());
-    // The public command path can select a different tool while the pointer is still down.
-    assert!(h.state_mut().execute("edit.snapshot"));
-    h.run_steps(2);
-    h.drop_at(end);
-    h.run_steps(2);
-    assert!(h.state().last_snapshot.is_none(), "a zoom gesture must not become a clipboard snapshot after a tool switch");
-    assert!(h.state().views[i].marquee.is_none(), "the abandoned rectangle is gone");
-    assert_eq!(h.state().views[i].zoom, before);
-    drag(&mut h, start, end);
-    assert!(h.state().last_snapshot.is_some(), "fresh Snapshot gestures work even while the old shortcut is held");
-    h.key_up(Key::Space);
-    h.event(Event::ModifiersChanged(Modifiers::NONE));
-    h.run_steps(2);
-    assert_eq!(h.state().quick_tool, QuickTool::Snapshot, "the explicit selection wins on release");
-    assert!(h.state().views[i].marquee.is_none());
-    assert!(!h.state().session.get(h.state().views[i].id).unwrap().dirty);
+    for make_zoom_persistent in [false, true] {
+        let mut h = harness();
+        h.state_mut().system_clipboard = false;
+        let i = h.state().active.unwrap();
+        let start = h.state().views[i].page_screen_rect(0).unwrap().center();
+        let end = start + egui::vec2(40.0, 30.0);
+        let before = h.state().views[i].zoom;
+        h.event(Event::ModifiersChanged(Modifiers::COMMAND));
+        h.key_down(Key::Space);
+        h.run_steps(2);
+        if make_zoom_persistent {
+            assert!(h.state_mut().execute("view.marquee_zoom"));
+        }
+        h.hover_at(start);
+        h.drag_at(start);
+        h.run_steps(2);
+        h.hover_at(end);
+        h.run_steps(2);
+        assert!(h.state().views[i].marquee.is_some());
+        // The public command path can select a different tool while the pointer is still down.
+        assert!(h.state_mut().execute("edit.snapshot"));
+        h.run_steps(2);
+        h.drop_at(end);
+        h.run_steps(2);
+        assert!(h.state().last_snapshot.is_none(), "a zoom gesture must not become a clipboard snapshot after a tool switch");
+        assert!(h.state().views[i].marquee.is_none(), "the abandoned rectangle is gone");
+        assert_eq!(h.state().views[i].zoom, before);
+        drag(&mut h, start, end);
+        assert!(h.state().last_snapshot.is_some(), "fresh Snapshot gestures work even while the old shortcut is held");
+        h.key_up(Key::Space);
+        h.event(Event::ModifiersChanged(Modifiers::NONE));
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, QuickTool::Snapshot, "the explicit selection wins on release");
+        assert!(h.state().views[i].marquee.is_none());
+        assert!(!h.state().session.get(h.state().views[i].id).unwrap().dirty);
+    }
 }
 
 #[test]

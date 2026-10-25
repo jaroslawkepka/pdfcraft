@@ -134,7 +134,7 @@ fn ui_set_marquee_zoom_preserves_persistent_tool_choices() {
                 if release_command_first {
                     h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
                     h.run_steps(2);
-                    assert_eq!(h.state().quick_tool, QuickTool::Hand, "Space still temporarily pans");
+                    assert_eq!(h.state().quick_tool, persistent, "modifier release cannot override an explicit choice");
                     h.key_up(Key::Space);
                 } else {
                     h.key_up(Key::Space);
@@ -144,9 +144,96 @@ fn ui_set_marquee_zoom_preserves_persistent_tool_choices() {
                 }
                 h.run_steps(2);
                 assert_eq!(h.state().quick_tool, persistent, "the deliberate persistent tool survives shortcut release");
+                h.key_down(Key::Space);
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, QuickTool::Hand, "a new hold pans after the explicit choice's hold ended");
+                h.key_up(Key::Space);
+                h.run_steps(2);
+                assert_eq!(h.state().quick_tool, persistent, "the new hold restores the explicit persistent choice");
             }
         }
     }
+}
+
+#[test]
+fn space_tool_release_and_new_press_in_one_frame_end_only_the_old_suppression() {
+    use egui::{Event, Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    for choose_again in [false, true] {
+        let (mut h, c) = harness();
+        h.key_down(Key::Space);
+        h.run_steps(2);
+        h.key_press(Key::V);
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, QuickTool::Select);
+        // Auto-repeat belongs to the same hold and must leave suppression intact.
+        h.event(Event::Key { key: Key::Space, physical_key: None, pressed: true, repeat: true, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, QuickTool::Select);
+        h.input_mut().events.extend([
+            Event::Key { key: Key::Space, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+            Event::Key { key: Key::Space, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+        ]);
+        let persistent = if choose_again {
+            // A choice dispatched in the new hold must not be erased by the old release.
+            ok(&mut h, &c, "ui.set", json!({"key": "quick", "value": "snapshot"}));
+            QuickTool::Snapshot
+        } else {
+            QuickTool::Select
+        };
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, if choose_again { QuickTool::Snapshot } else { QuickTool::Hand }, "this is a new physical hold");
+        h.key_up(Key::Space);
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, persistent);
+    }
+}
+
+#[test]
+fn space_tool_control_choice_survives_blocked_input() {
+    use egui::{Key, Modifiers};
+    use pdfcraft_ui_egui::{Dialog, QuickTool};
+    for blocked in [false, true] {
+        let (mut h, c) = harness();
+        ok(&mut h, &c, "ui.set", json!({"key": "quick", "value": "crop"}));
+        h.key_down(Key::Space);
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, QuickTool::Hand);
+        if blocked {
+            h.state_mut().dialog = Some(Dialog::About);
+            h.run_steps(2);
+            assert_eq!(h.state().quick_tool, QuickTool::Crop);
+        }
+        ok(&mut h, &c, "ui.set", json!({"key": "quick", "value": "hand"}));
+        h.state_mut().dialog = None;
+        h.event(egui::Event::ModifiersChanged(Modifiers::COMMAND));
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, QuickTool::Hand, "the explicit control choice survives ownership and modifier changes");
+        h.key_up(Key::Space);
+        h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+        h.run_steps(2);
+        assert_eq!(h.state().quick_tool, QuickTool::Hand);
+    }
+}
+
+#[test]
+fn space_tool_control_choice_before_first_override_frame_wins() {
+    use egui::{Key, Modifiers};
+    use pdfcraft_ui_egui::QuickTool;
+    let (mut h, c) = harness();
+    // Harness::event queues one frame per event; put both events in this single input frame.
+    h.input_mut().events.extend([
+        egui::Event::ModifiersChanged(Modifiers::COMMAND),
+        egui::Event::Key { key: Key::Space, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::COMMAND },
+    ]);
+    // Control requests run before tool_keys in the first frame of this hold.
+    ok(&mut h, &c, "ui.set", json!({"key": "quick", "value": "snapshot"}));
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
+    h.key_up(Key::Space);
+    h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Snapshot);
 }
 
 #[test]

@@ -262,6 +262,16 @@ pub enum QuickTool {
     ColumnSelect,
 }
 
+#[derive(Clone, Copy)]
+enum SpaceTool {
+    Temporary {
+        previous: QuickTool,
+        tool: QuickTool,
+    },
+    /// An explicit choice owns the rest of this physical Space hold, regardless of modifiers.
+    Suppressed,
+}
+
 /// A file dropped on a page grid: its name, and its bytes or, for a file on disk, the path they are
 /// read from when the file's turn to be inserted comes (so a long drop holds one file at a time).
 type GridFile = (String, Result<Vec<u8>, std::path::PathBuf>);
@@ -657,11 +667,10 @@ pub struct PdfCraftApp {
     /// The user closed the right panel, so opening a document leaves it closed instead of
     /// showing its comments or bookmarks (#1590). Remembered across restarts.
     pub right_panel_closed: bool,
+    /// The effective tool, including temporary Space overrides.
     pub quick_tool: QuickTool,
-    /// (Previous tool, temporary tool) while Space is held for Hand or Ctrl/⌘+Space for zoom.
-    /// A deliberate tool change during zoom discards the previous tool but keeps the override
-    /// marker until release, so holding the keys cannot reactivate it over the user's choice.
-    space_tool: Option<(Option<QuickTool>, QuickTool)>,
+    /// An active temporary override, or suppression until the current Space hold ends.
+    space_tool: Option<SpaceTool>,
     /// The tool before full screen, given back on leaving it (see [`Self::apply_full_screen`]).
     full_screen_tool: Option<QuickTool>,
     /// Comment author, per-tool colours and widths, pin.
@@ -1890,9 +1899,11 @@ impl PdfCraftApp {
         // A click turns the page only with the Select tool, and full screen hides the tools:
         // select it there, and give the tool back on leaving (review on #2070).
         if on && !self.full_screen {
+            self.suspend_space_tool();
             self.full_screen_tool = Some(self.quick_tool);
             self.quick_tool = QuickTool::Select;
         } else if !on && let Some(tool) = self.full_screen_tool.take() {
+            self.suspend_space_tool();
             self.quick_tool = tool;
         }
         self.full_screen = on;
@@ -2520,14 +2531,14 @@ impl PdfCraftApp {
             self.all_tools_full = false;
         }
         if mode == Mode::Edit {
-            self.quick_tool = QuickTool::EditText;
-        } else if matches!(self.quick_tool, QuickTool::EditText | QuickTool::AddText) {
+            self.select_quick_tool(QuickTool::EditText);
+        } else if matches!(self.persistent_quick_tool(), QuickTool::EditText | QuickTool::AddText) {
             self.put_down_edit_text();
         }
         // Read mode hides the quick toolbar, so no other tool may stay active there. Opening a
         // document with Read as the default mode comes here without `switch_mode`.
         if mode == Mode::Read {
-            self.quick_tool = QuickTool::Select;
+            self.select_quick_tool(QuickTool::Select);
         }
     }
 
@@ -2550,7 +2561,7 @@ impl PdfCraftApp {
     /// applied, as clicking away from it does; left open, its page would keep showing the
     /// paragraph's text removed with no editor over it.
     pub(crate) fn put_down_edit_text(&mut self) {
-        self.quick_tool = QuickTool::Select;
+        self.select_quick_tool(QuickTool::Select);
         if let Some(ed) = self.active.and_then(|i| self.views.get_mut(i)).and_then(|v| v.line_editor.take())
             && let Some(edit) = edit_text_ui::finished_edit(ed)
         {
@@ -2575,7 +2586,7 @@ impl PdfCraftApp {
             if matches!(self.quick_tool, QuickTool::EditText | QuickTool::AddText) {
                 self.put_down_edit_text();
             } else {
-                self.quick_tool = QuickTool::Select;
+                self.select_quick_tool(QuickTool::Select);
             }
         } else if mode != Mode::Read && was_read {
             let before = self.right_before_read.take();
@@ -3128,10 +3139,9 @@ impl PdfCraftApp {
                 v.select_pages(&pages);
             }
             ("notice", Some(v)) => v.notice_dismissed = value == "off",
-            ("quick", _) if value == "marquee-zoom" => self.select_marquee_zoom(),
             ("quick", _) => {
                 // `--quick select|hand|note|freetext|highlight|underline|strikeout|ink|line|arrow|square|circle`
-                self.quick_tool = match value {
+                let tool = match value {
                     "select" => QuickTool::Select,
                     measure if measure.starts_with("measure-") => QuickTool::Measure(
                         measure_ui::Tool::from_name(measure.trim_start_matches("measure-")).ok_or_else(|| format!("unknown tool {measure}"))?,
@@ -3144,6 +3154,7 @@ impl PdfCraftApp {
                     "edit-text" => QuickTool::EditText,
                     "link" => QuickTool::Link,
                     "sign" => QuickTool::SignArea { certify: false },
+                    "marquee-zoom" => QuickTool::MarqueeZoom,
                     "snapshot" => QuickTool::Snapshot,
                     "column-select" => QuickTool::ColumnSelect,
                     "certify" => QuickTool::SignArea { certify: true },
@@ -3172,6 +3183,7 @@ impl PdfCraftApp {
                         QuickTool::Comment(t)
                     }
                 };
+                self.select_quick_tool(tool);
             }
             ("author", _) => self.comment_prefs.author = value.to_string(),
             ("comment-tool-pinned", _) => {
@@ -3420,11 +3432,46 @@ impl PdfCraftApp {
         }
     }
 
-    fn select_marquee_zoom(&mut self) {
-        self.quick_tool = QuickTool::MarqueeZoom;
-        // Retain the held-key marker, but stop restoring the old persistent tool.
-        if let Some((previous, QuickTool::MarqueeZoom)) = &mut self.space_tool {
-            *previous = None;
+    /// Select a persistent tool. A held Space shortcut cannot override this choice, even if
+    /// its modifiers or keyboard owner change before Space is released.
+    pub(crate) fn select_quick_tool(&mut self, tool: QuickTool) {
+        self.suppress_space_tool();
+        if self.space_tool.is_some() && self.quick_tool != tool {
+            self.clear_marquee_gestures();
+        }
+        self.quick_tool = tool;
+    }
+
+    fn suppress_space_tool(&mut self) {
+        // The marker can be absent when the tool already matched, a palette took ownership,
+        // or a control request selected a tool before tool_keys ran this frame.
+        if self.space_tool.is_some() || self.ctx.as_ref().is_some_and(|ctx| ctx.input(|i| i.key_down(egui::Key::Space))) {
+            self.space_tool = Some(SpaceTool::Suppressed);
+        }
+    }
+
+    fn persistent_quick_tool(&self) -> QuickTool {
+        match self.space_tool {
+            Some(SpaceTool::Temporary { previous, tool }) if self.quick_tool == tool => previous,
+            _ => self.quick_tool,
+        }
+    }
+
+    /// Full screen owns its own temporary tool: never save an active Space override as the
+    /// tool to restore, or let the interrupted hold reactivate underneath it.
+    fn suspend_space_tool(&mut self) {
+        let persistent = self.persistent_quick_tool();
+        self.suppress_space_tool();
+        if self.space_tool.is_some() {
+            self.clear_marquee_gestures();
+        }
+        self.quick_tool = persistent;
+    }
+
+    fn clear_marquee_gestures(&mut self) {
+        for view in &mut self.views {
+            view.marquee = None;
+            view.marquee_done = None;
         }
     }
 
@@ -3441,7 +3488,7 @@ impl PdfCraftApp {
             None
         } else if modifiers.matches_exact(Modifiers::COMMAND) {
             Some(QuickTool::MarqueeZoom)
-        } else if plain || self.space_tool.is_some_and(|(_, tool)| tool == QuickTool::Hand) {
+        } else if plain || matches!(self.space_tool, Some(SpaceTool::Temporary { tool: QuickTool::Hand, .. })) {
             // Adding an unrelated modifier to an existing temporary Hand keeps panning.
             Some(QuickTool::Hand)
         } else {
@@ -3450,7 +3497,7 @@ impl PdfCraftApp {
         if free
             && temporary != Some(QuickTool::MarqueeZoom)
             && self.quick_tool == QuickTool::MarqueeZoom
-            && self.space_tool.is_some_and(|(_, tool)| tool == QuickTool::MarqueeZoom)
+            && matches!(self.space_tool, Some(SpaceTool::Temporary { tool: QuickTool::MarqueeZoom, .. }))
             && ctx.input(|input| {
                 input.pointer.primary_clicked()
                     || ((view.is_some_and(|v| v.marquee.is_some()) || partner.is_some_and(|v| v.marquee.is_some())) && input.pointer.any_released())
@@ -3461,45 +3508,44 @@ impl PdfCraftApp {
             temporary = Some(QuickTool::MarqueeZoom);
             ctx.request_repaint();
         }
-        if let Some((previous, QuickTool::MarqueeZoom)) = &mut self.space_tool
-            && previous.is_some()
-            && (temporary != Some(QuickTool::MarqueeZoom) || self.quick_tool != QuickTool::MarqueeZoom)
-        {
-            for view in &mut self.views {
-                view.marquee = None;
-                view.marquee_done = None;
+        if free && plain {
+            if ctx.input(|input| input.key_pressed(Key::V)) {
+                self.select_quick_tool(QuickTool::Select);
             }
-            if self.quick_tool != QuickTool::MarqueeZoom {
-                // Cancel the old gesture once; fresh gestures belong to the selected tool.
-                *previous = None;
+            if ctx.input(|input| input.key_pressed(Key::H)) {
+                self.select_quick_tool(QuickTool::Hand);
             }
         }
-        if let Some((previous, tool)) = self.space_tool
+        if let Some(SpaceTool::Temporary { tool, .. }) = self.space_tool
+            && self.quick_tool != tool
+        {
+            // Internal one-shot tools and legacy direct assignments can also replace a tool.
+            self.suppress_space_tool();
+            self.clear_marquee_gestures();
+        }
+        if matches!(self.space_tool, Some(SpaceTool::Suppressed)) {
+            if !space {
+                self.space_tool = None;
+            }
+            return;
+        }
+        if let Some(SpaceTool::Temporary { previous, tool }) = self.space_tool
             && temporary != Some(tool)
         {
-            self.space_tool = None;
-            if self.quick_tool == tool
-                && let Some(previous) = previous
-            {
-                self.quick_tool = previous;
+            if tool == QuickTool::MarqueeZoom {
+                self.clear_marquee_gestures();
             }
+            self.space_tool = None;
+            self.quick_tool = previous;
         }
         if !free {
             return;
-        }
-        if plain && ctx.input(|input| input.key_pressed(Key::V)) {
-            self.quick_tool = QuickTool::Select;
-            self.space_tool = None;
-        }
-        if plain && ctx.input(|input| input.key_pressed(Key::H)) {
-            self.quick_tool = QuickTool::Hand;
-            self.space_tool = None;
         }
         if let Some(tool) = temporary
             && self.space_tool.is_none()
             && self.quick_tool != tool
         {
-            self.space_tool = Some((Some(self.quick_tool), tool));
+            self.space_tool = Some(SpaceTool::Temporary { previous: self.quick_tool, tool });
             self.quick_tool = tool;
         }
     }
@@ -3537,6 +3583,21 @@ impl eframe::App for PdfCraftApp {
     /// the quit guard, shortcuts, and the background jobs' results.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ctx = Some(ctx.clone());
+        // A release can be followed by a new press in the same frame. End the old hold before
+        // control commands select a tool for the new one. Consume only releases: hidden logic
+        // reuses the last frame's events, and must not discard that new choice on replay.
+        let space_released = ctx.input_mut(|input| {
+            let mut released = false;
+            input.events.retain(|event| {
+                let release = matches!(event, egui::Event::Key { key: egui::Key::Space, pressed: false, .. });
+                released |= release;
+                !release
+            });
+            released
+        });
+        if space_released && matches!(self.space_tool, Some(SpaceTool::Suppressed)) {
+            self.space_tool = None;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         self.window_state.repair(ctx);
         self.dialog_epoch();

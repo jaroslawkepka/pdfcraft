@@ -99,6 +99,7 @@ pub(crate) fn create_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) 
 pub(crate) fn palette_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     widgets::section_title(ui, tl!("Custom"));
     let mut remove = None;
+    let mut selected = None;
     let mut categories: Vec<String> = app.custom_stamps.iter().map(|s| s.category.clone()).collect();
     categories.sort();
     categories.dedup();
@@ -108,7 +109,7 @@ pub(crate) fn palette_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Toke
             let active = app.quick_tool == QuickTool::CustomStamp(i);
             let resp = ui.add(egui::Button::selectable(active, s.name.as_str()).min_size(egui::vec2(ui.available_width(), 28.0)));
             if resp.clicked() {
-                app.quick_tool = QuickTool::CustomStamp(i);
+                selected = Some(i);
             }
             resp.context_menu(|ui| {
                 if ui.button(tl!("Delete stamp")).clicked() {
@@ -118,9 +119,12 @@ pub(crate) fn palette_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Toke
             });
         }
     }
+    if let Some(i) = selected {
+        app.select_quick_tool(QuickTool::CustomStamp(i));
+    }
     if let Some(i) = remove {
         app.custom_stamps.remove(i);
-        app.quick_tool = QuickTool::Select;
+        app.select_quick_tool(QuickTool::Select);
     }
     ui.add_space(4.0);
     if widgets::pill_button(ui, tl!("Create custom stamp…"), false).on_hover_text(tl!("From a PDF page or an image")).clicked() {
@@ -171,7 +175,7 @@ impl PdfCraftApp {
     pub(crate) fn save_custom_stamp(&mut self) {
         let d = std::mem::take(&mut self.stamp_draft);
         self.custom_stamps.push(CustomStamp { category: d.category.trim().into(), name: d.name.trim().into(), file: d.file, page: 0, data: d.data });
-        self.quick_tool = QuickTool::CustomStamp(self.custom_stamps.len() - 1);
+        self.select_quick_tool(QuickTool::CustomStamp(self.custom_stamps.len() - 1));
     }
 }
 

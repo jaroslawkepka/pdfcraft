@@ -547,11 +547,11 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         app.views[index].comments.selected = Some((page, annotation));
         app.views[index].measure.reading = Some(reading);
         app.views[index].measure.scale = Some(scale);
-        app.quick_tool = QuickTool::Select;
+        app.select_quick_tool(QuickTool::Select);
     }
     if let Some(tool) = tool {
         app.views[index].measure.cancel();
-        app.quick_tool = QuickTool::Measure(tool);
+        app.select_quick_tool(QuickTool::Measure(tool));
     }
     if export {
         export_csv(app);
@@ -564,7 +564,7 @@ pub(crate) fn command(app: &mut PdfCraftApp, id: &str) {
         && let Some(tool) = id.strip_prefix("measure.").and_then(Tool::from_name)
     {
         app.views[index].measure.cancel();
-        app.quick_tool = QuickTool::Measure(tool);
+        app.select_quick_tool(QuickTool::Measure(tool));
     }
     if id == "measure.export" {
         export_csv(app);

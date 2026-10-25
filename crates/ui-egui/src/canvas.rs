@@ -5125,10 +5125,10 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.vertical(|ui| {
                     if icons::button(ui, "mouse-pointer-2", 32.0, app.quick_tool == QuickTool::Select, tl!("Select (V)")).clicked() {
-                        app.quick_tool = QuickTool::Select;
+                        app.select_quick_tool(QuickTool::Select);
                     }
                     if icons::button(ui, "hand", 32.0, app.quick_tool == QuickTool::Hand, tl!("Hand (H)")).clicked() {
-                        app.quick_tool = QuickTool::Hand;
+                        app.select_quick_tool(QuickTool::Hand);
                     }
                     // Comment ▸, Highlight ▸, Draw ▸ (Acrobat's comment toolbar groups). Clicking a
                     // group selects its last-used tool; clicking it again opens the flyout.
@@ -5192,7 +5192,7 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                             if on {
                                 app.put_down_edit_text();
                             } else {
-                                app.quick_tool = QuickTool::EditText;
+                                app.select_quick_tool(QuickTool::EditText);
                             }
                         }
                     }
